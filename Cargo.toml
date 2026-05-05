@@ -1,0 +1,48 @@
+[package]
+name = "libc-cfg"
+version = "0.3.3"
+description = "A codegen tool for extracting libc cfg"
+readme = "README.md"
+documentation = "https://docs.rs/libc-cfg"
+repository = "https://github.com/Nugine/libc-cfg"
+categories = ["development-tools", "os"]
+keywords = ["libc", "cfg", "codegen", "build"]
+include = ["Cargo.lock", "Cargo.toml", "LICENSE", "README.md", "src/**/*.rs"]
+edition = "2024"
+license = "MIT"
+rust-version = "1.87"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "libc-cfg"
+required-features = ["binary"]
+
+[features]
+binary = ["dep:clap", "dep:env_logger"]
+
+[dependencies]
+anyhow = "1.0.102"
+bool-logic = "0.3.3"
+camino = "1.2.2"
+clap = { version = "4.5.60", features = ["derive"], optional = true }
+env_logger = { version = "0.11.10", optional = true }
+log = "0.4.29"
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
+regex = "1.12.3"
+std-next = "0.1.9"
+syn = { version = "2.0.117", features = ["full", "visit", "visit-mut", "extra-traits"] }
+
+[profile.release]
+debug = "line-tables-only"
