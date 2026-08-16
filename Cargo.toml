@@ -19,6 +19,7 @@ unsafe_code = "forbid"
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
+multiple_crate_versions = "allow"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -42,7 +43,7 @@ proc-macro2 = "1.0.106"
 quote = "1.0.45"
 regex = "1.12.3"
 std-next = "0.1.9"
-syn = { version = "2.0.117", features = ["full", "visit", "visit-mut", "extra-traits"] }
+syn = { version = "3.0.3", features = ["full", "visit", "visit-mut", "extra-traits"] }
 
 [profile.release]
 debug = "line-tables-only"
