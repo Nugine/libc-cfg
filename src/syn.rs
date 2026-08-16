@@ -27,7 +27,9 @@ use stdx::default::default;
 use stdx::iter::map_collect_vec;
 
 use log::debug;
+use proc_macro2::Group;
 use proc_macro2::TokenStream;
+use proc_macro2::TokenTree;
 use quote::quote;
 use regex::RegexSet;
 
@@ -116,7 +118,8 @@ impl ExpandCfgIf {
 
     fn expand(ast: &Item) -> Vec<Item> {
         let Item::Macro(ast) = ast else { panic!() };
-        let macro_: CfgIf = syn::parse2(ast.mac.tokens.clone()).expect("ill-formed cfg_if");
+        let tokens = strip_safe_keywords(ast.mac.tokens.clone());
+        let macro_: CfgIf = syn::parse2(tokens).expect("ill-formed cfg_if");
 
         debug!("expanding cfg_if");
 
@@ -301,8 +304,45 @@ struct FindItems<'a> {
     ans: Vec<(CfgExpr, Ident)>,
 }
 
+/// Strip the `safe` keyword from a token stream.
+///
+/// libc's `f!` / `safe_f!` macro bodies contain `safe fn` / `const safe fn`
+/// (ordinary fn definitions), but syn 3's `Item::Fn` parsing does not support
+/// the `safe` keyword (`allow_safe` is hardcoded to false). We therefore remove
+/// it before `parse_quote!`. Only `safe` used as a safety modifier (immediately
+/// before `fn` or `extern`) is removed; group spans are preserved. This only
+/// affects parsing, not symbol extraction.
+fn strip_safe_keywords(tokens: TokenStream) -> TokenStream {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut out = Vec::with_capacity(trees.len());
+    let mut i = 0;
+    while i < trees.len() {
+        match &trees[i] {
+            TokenTree::Ident(ident)
+                if ident == "safe"
+                    && matches!(
+                        trees.get(i + 1),
+                        Some(TokenTree::Ident(next)) if next == "fn" || next == "extern"
+                    ) =>
+            {
+                // skip the `safe` keyword
+            }
+            TokenTree::Group(group) => {
+                let inner = strip_safe_keywords(group.stream());
+                let mut new_group = Group::new(group.delimiter(), inner);
+                new_group.set_span(group.span());
+                out.push(TokenTree::Group(new_group));
+            }
+            _ => out.push(trees[i].clone()),
+        }
+        i += 1;
+    }
+    out.into_iter().collect()
+}
+
 impl FindItems<'_> {
     fn expand_item_group(&mut self, tokens: &TokenStream) {
+        let tokens = strip_safe_keywords(tokens.clone());
         let stmts: Vec<Stmt> = parse_quote! { #tokens };
         for stmt in stmts {
             let Stmt::Item(item) = stmt else { panic!() };
@@ -371,7 +411,10 @@ impl<'ast> Visit<'ast> for FindItems<'_> {
         if ast.ident.is_some() {
             return;
         }
-        let ident = ast.mac.path.get_ident().unwrap();
+        let Some(ident) = ast.mac.path.get_ident() else {
+            log::warn!("unknown macro path: {:?}", ast.mac.path);
+            return;
+        };
 
         if ident == "static_assert_eq" {
             return;
@@ -413,9 +456,9 @@ impl<'ast> Visit<'ast> for FindItems<'_> {
             syn::ForeignItem::Fn(ast) => push!(self, ast, &ast.sig.ident),
             syn::ForeignItem::Static(ast) => push!(self, ast),
             syn::ForeignItem::Type(ast) => push!(self, ast),
-            syn::ForeignItem::Macro(_) => unimplemented!(),
-            syn::ForeignItem::Verbatim(_) => panic!(),
-            _ => unimplemented!(),
+            syn::ForeignItem::Macro(_) => log::warn!("skipping foreign macro item"),
+            syn::ForeignItem::Verbatim(_) => log::warn!("skipping foreign verbatim item"),
+            _ => log::warn!("skipping unknown foreign item"),
         }
     }
 }
