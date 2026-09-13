@@ -1,5 +1,5 @@
 use bool_logic::ast::{All, Any, Not, Var, any, expr};
-use bool_logic::cfg::ast::{Expr, Pred, flag, target_family};
+use bool_logic::cfg::ast::{Expr, Pred, flag, target_family, target_os};
 use bool_logic::visit_mut::{VisitMut, walk_mut_expr, walk_mut_expr_list};
 
 use bool_logic::transforms::dedup_list::DedupList;
@@ -27,6 +27,9 @@ pub fn simplified_expr(x: impl Into<Expr>) -> Expr {
     let mut x = x.into();
 
     debug!("input:                              {x}");
+
+    ExpandTargetVendor.visit_mut_expr(&mut x);
+    trace!("after  ExpandTargetVendor:          {x}");
 
     UnifyTargetFamily.visit_mut_expr(&mut x);
     trace!("after  UnifyTargetFamily:           {x}");
@@ -172,6 +175,31 @@ impl VisitMut<Pred> for SortByValue {
     }
 }
 
+/// Rewrites `target_vendor = "apple"` into the equivalent `target_os` list,
+/// so that the `target_os` based rules keep working.
+struct ExpandTargetVendor;
+
+impl ExpandTargetVendor {
+    const APPLE_OSES: &'static [&'static str] = &["ios", "macos", "tvos", "visionos", "watchos"];
+}
+
+impl VisitMut<Pred> for ExpandTargetVendor {
+    fn visit_mut_expr(&mut self, x: &mut Expr) {
+        walk_mut_expr(self, x);
+
+        let expand = matches!(
+            x,
+            Expr::Var(Var(pred))
+                if pred.key == "target_vendor" && pred.value.as_deref() == Some("apple")
+        );
+
+        if expand {
+            let oses = map_collect_vec(Self::APPLE_OSES, |os| expr(target_os(*os)));
+            *x = Expr::Any(Any(oses));
+        }
+    }
+}
+
 struct UnifyTargetFamily;
 
 impl VisitMut<Pred> for UnifyTargetFamily {
@@ -288,25 +316,20 @@ impl VisitMut<Pred> for ImplyByKey {
 struct SuppressTargetFamily;
 
 impl SuppressTargetFamily {
-    fn is_family_implier(x: &Expr) -> bool {
+    fn is_target_os_pred(x: &Expr) -> bool {
         match x {
-            Expr::Var(Var(var)) => match (var.key.as_str(), var.value.as_deref()) {
-                // a specified `target_os` pins the target family;
-                // all Rust targets with vendor `apple` are unix
-                ("target_os", _) | ("target_vendor", Some("apple")) => true,
-                _ => false,
-            },
+            Expr::Var(Var(var)) => var.key == "target_os",
             _ => false,
         }
     }
 
-    fn has_specified_family_implier(x: &Expr) -> bool {
-        if Self::is_family_implier(x) {
+    fn has_specified_target_os(x: &Expr) -> bool {
+        if Self::is_target_os_pred(x) {
             return true;
         }
 
         if let Expr::Any(Any(any)) = x {
-            return any.iter().all(Self::is_family_implier);
+            return any.iter().all(Self::is_target_os_pred);
         }
 
         false
@@ -324,7 +347,7 @@ impl SuppressTargetFamily {
 
 impl VisitMut<Pred> for SuppressTargetFamily {
     fn visit_mut_all(&mut self, All(all): &mut All<Pred>) {
-        if all.iter().any(Self::has_specified_family_implier) {
+        if all.iter().any(Self::has_specified_target_os) {
             all.remove_if(|x| match x {
                 Expr::Var(Var(pred)) => Self::is_suppressed_target_family(pred),
                 Expr::Not(Not(not)) => match &**not {
@@ -411,14 +434,36 @@ mod tests {
     }
 
     #[test]
+    fn expand_target_vendor() {
+        let expr = simplified_expr(target_vendor("apple"));
+        assert_eq!(
+            expr.to_string(),
+            concat!(
+                r#"any(target_os = "ios", target_os = "macos", target_os = "tvos", "#,
+                r#"target_os = "visionos", target_os = "watchos")"#,
+            )
+        );
+
+        // a pinned `target_os` makes the expanded vendor predicate false
+        let expr = simplified_expr(all((target_vendor("apple"), target_os("linux"))));
+        assert_eq!(expr.to_string(), "false");
+    }
+
+    #[test]
     fn suppress_target_family() {
         // a specified `target_os` pins the target family
         let expr = simplified_expr(all((target_os("linux"), flag("unix"))));
         assert_eq!(expr.to_string(), r#"target_os = "linux""#);
 
-        // vendor `apple` also pins the target family
+        // an expanded vendor predicate does too
         let expr = simplified_expr(all((target_vendor("apple"), flag("unix"))));
-        assert_eq!(expr.to_string(), r#"target_vendor = "apple""#);
+        assert_eq!(
+            expr.to_string(),
+            concat!(
+                r#"any(target_os = "ios", target_os = "macos", target_os = "tvos", "#,
+                r#"target_os = "visionos", target_os = "watchos")"#,
+            )
+        );
 
         // other vendors do not
         let expr = simplified_expr(all((target_vendor("unknown"), flag("unix"))));
