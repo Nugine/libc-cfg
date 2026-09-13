@@ -1,6 +1,6 @@
 [package]
 name = "libc-cfg"
-version = "0.3.5"
+version = "0.3.6"
 description = "A codegen tool for extracting libc cfg"
 readme = "README.md"
 documentation = "https://docs.rs/libc-cfg"
