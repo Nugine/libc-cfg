@@ -288,20 +288,25 @@ impl VisitMut<Pred> for ImplyByKey {
 struct SuppressTargetFamily;
 
 impl SuppressTargetFamily {
-    fn is_target_os_pred(x: &Expr) -> bool {
+    fn is_family_implier(x: &Expr) -> bool {
         match x {
-            Expr::Var(Var(var)) => var.key == "target_os",
+            Expr::Var(Var(var)) => match (var.key.as_str(), var.value.as_deref()) {
+                // a specified `target_os` pins the target family;
+                // all Rust targets with vendor `apple` are unix
+                ("target_os", _) | ("target_vendor", Some("apple")) => true,
+                _ => false,
+            },
             _ => false,
         }
     }
 
-    fn has_specified_target_os(x: &Expr) -> bool {
-        if Self::is_target_os_pred(x) {
+    fn has_specified_family_implier(x: &Expr) -> bool {
+        if Self::is_family_implier(x) {
             return true;
         }
 
         if let Expr::Any(Any(any)) = x {
-            return any.iter().all(Self::is_target_os_pred);
+            return any.iter().all(Self::is_family_implier);
         }
 
         false
@@ -319,7 +324,7 @@ impl SuppressTargetFamily {
 
 impl VisitMut<Pred> for SuppressTargetFamily {
     fn visit_mut_all(&mut self, All(all): &mut All<Pred>) {
-        if all.iter().any(Self::has_specified_target_os) {
+        if all.iter().any(Self::has_specified_family_implier) {
             all.remove_if(|x| match x {
                 Expr::Var(Var(pred)) => Self::is_suppressed_target_family(pred),
                 Expr::Not(Not(not)) => match &**not {
@@ -394,6 +399,7 @@ mod tests {
     use bool_logic::ast::all;
     use bool_logic::ast::not;
     use bool_logic::cfg::ast::target_os;
+    use bool_logic::cfg::ast::target_vendor;
 
     use super::*;
 
@@ -402,6 +408,21 @@ mod tests {
         let mut expr = expr(all((not(flag("unix")), flag("unix"))));
         SortByPriority.visit_mut_expr(&mut expr);
         assert_eq!(expr.to_string(), "all(unix, not(unix))");
+    }
+
+    #[test]
+    fn suppress_target_family() {
+        // a specified `target_os` pins the target family
+        let expr = simplified_expr(all((target_os("linux"), flag("unix"))));
+        assert_eq!(expr.to_string(), r#"target_os = "linux""#);
+
+        // vendor `apple` also pins the target family
+        let expr = simplified_expr(all((target_vendor("apple"), flag("unix"))));
+        assert_eq!(expr.to_string(), r#"target_vendor = "apple""#);
+
+        // other vendors do not
+        let expr = simplified_expr(all((target_vendor("unknown"), flag("unix"))));
+        assert_eq!(expr.to_string(), r#"all(unix, target_vendor = "unknown")"#);
     }
 
     #[test]
