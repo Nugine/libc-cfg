@@ -432,6 +432,8 @@ impl<'ast> Visit<'ast> for FindItems<'_> {
         let item_group_macros = [
             "s",
             "s_no_extra_traits",
+            "s2",
+            "s_no_extra_traits2",
             "e",
             "s_paren",
             "align_const",
