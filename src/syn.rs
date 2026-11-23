@@ -279,6 +279,12 @@ fn parse_cfg(tokens: &TokenStream) -> CfgExpr {
     }
 }
 
+fn is_deprecated(attrs: &[Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr.meta.path().is_ident("deprecated"))
+}
+
 fn find_cfg_in_attrs(attrs: &[Attribute]) -> CfgExpr {
     let cfg_attrs = attrs
         .iter()
@@ -290,7 +296,7 @@ fn find_cfg_in_attrs(attrs: &[Attribute]) -> CfgExpr {
     simplified_expr(cfg_all(cfg_exprs))
 }
 
-pub fn find_cfg_items(ast: &File, re: &RegexSet) -> Vec<(CfgExpr, Ident)> {
+pub fn find_cfg_items(ast: &File, re: &RegexSet) -> Vec<(CfgExpr, Ident, bool)> {
     let mut find_items = FindItems {
         re,
         ans: Vec::new(),
@@ -301,7 +307,7 @@ pub fn find_cfg_items(ast: &File, re: &RegexSet) -> Vec<(CfgExpr, Ident)> {
 
 struct FindItems<'a> {
     re: &'a RegexSet,
-    ans: Vec<(CfgExpr, Ident)>,
+    ans: Vec<(CfgExpr, Ident, bool)>,
 }
 
 /// Strip the `safe` keyword from a token stream.
@@ -357,8 +363,9 @@ macro_rules! push {
         if let syn::Visibility::Public(_) = ast.vis {
             if $self.re.is_match(&ast.ident.to_string()) {
                 let cfg = find_cfg_in_attrs(&ast.attrs);
+                let deprecated = is_deprecated(&ast.attrs);
                 let name = ast.ident.clone();
-                $self.ans.push((cfg, name));
+                $self.ans.push((cfg, name, deprecated));
             }
         }
     }};
@@ -368,8 +375,9 @@ macro_rules! push {
         if let syn::Visibility::Public(_) = ast.vis {
             if $self.re.is_match(&ident.to_string()) {
                 let cfg = find_cfg_in_attrs(&ast.attrs);
+                let deprecated = is_deprecated(&ast.attrs);
                 let name = ident.clone();
-                $self.ans.push((cfg, name));
+                $self.ans.push((cfg, name, deprecated));
             }
         }
     }};

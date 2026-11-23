@@ -5,3 +5,5 @@ s2! {
         pub rlim_max: u64,
     }
 }
+
+pub const MIXED: u8 = 1;

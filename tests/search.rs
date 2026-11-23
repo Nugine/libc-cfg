@@ -23,3 +23,39 @@ fn finds_items_in_s2_macros() {
         );
     }
 }
+/// Definitions marked `#[deprecated]` are excluded from `cfg` and reported
+/// through `deprecated_cfg`.
+#[test]
+fn separates_deprecated_definitions() {
+    let re = RegexSet::new(["^MIXED$", "^DEPRECATED_ONLY$"]).unwrap();
+    let libc = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/libc");
+
+    let items = search(libc, &re).unwrap();
+    let find = |name: &str| items.iter().find(|item| item.name == name).unwrap();
+
+    let mixed = find("MIXED");
+    let cfg = mixed.cfg.to_string();
+    let deprecated = mixed.deprecated_cfg.to_string();
+    assert!(cfg.contains("unix"), "unexpected cfg for MIXED: {cfg}");
+    assert!(
+        !cfg.contains("fuchsia"),
+        "deprecated cfg leaked into MIXED: {cfg}"
+    );
+    assert!(
+        deprecated.contains("fuchsia"),
+        "unexpected deprecated_cfg for MIXED: {deprecated}"
+    );
+
+    let only_deprecated = find("DEPRECATED_ONLY");
+    assert!(
+        only_deprecated.cfg.is_const_false(),
+        "deprecated-only item must not be available: {}",
+        only_deprecated.cfg
+    );
+    assert!(
+        only_deprecated
+            .deprecated_cfg
+            .to_string()
+            .contains("fuchsia")
+    );
+}
