@@ -25,7 +25,11 @@ use stdx::default::default;
 use stdx::iter::map_collect_vec;
 
 pub struct CfgItem {
+    /// Availability of the item, counting only definitions that are not
+    /// marked `#[deprecated]` in libc.
     pub cfg: CfgExpr,
+    /// The subset of definitions that libc marks `#[deprecated]`.
+    pub deprecated_cfg: CfgExpr,
     pub name: String,
 }
 
@@ -33,13 +37,16 @@ pub fn search(libc: impl AsRef<Utf8Path>, re: &RegexSet) -> Result<Vec<CfgItem>>
     let items = search_items(libc.as_ref(), re)
         .with_context(|| format!("failed to search items: {re:?}"))?;
 
-    Ok(map_collect_vec(items, |(cfg, name)| CfgItem {
-        cfg,
-        name: name.to_string(),
+    Ok(map_collect_vec(items, |(cfg, deprecated_cfg, name)| {
+        CfgItem {
+            cfg,
+            deprecated_cfg,
+            name: name.to_string(),
+        }
     }))
 }
 
-fn search_items(libc: &Utf8Path, re: &RegexSet) -> Result<Vec<(CfgExpr, Ident)>> {
+fn search_items(libc: &Utf8Path, re: &RegexSet) -> Result<Vec<(CfgExpr, CfgExpr, Ident)>> {
     let mut ctx = DfsContext {
         re,
         items: default(),
@@ -74,13 +81,34 @@ fn find_mod_in_file(ast: &File) -> Vec<(CfgExpr, Ident)> {
         map.entry(name).or_default().push(cfg);
     }
 
-    aggregate_items(map)
+    aggregate_mods(map)
 }
 
-fn aggregate_items(map: HashMap<Ident, Vec<CfgExpr>>) -> Vec<(CfgExpr, Ident)> {
+fn aggregate_mods(map: HashMap<Ident, Vec<CfgExpr>>) -> Vec<(CfgExpr, Ident)> {
     let mut ans = map_collect_vec(map, |(name, exprs)| (simplified_expr(cfg_any(exprs)), name));
     ans.sort_by(|lhs, rhs| lhs.1.cmp(&rhs.1));
     ans
+}
+
+fn aggregate_items(map: HashMap<Ident, Vec<(CfgExpr, bool)>>) -> Vec<(CfgExpr, CfgExpr, Ident)> {
+    let mut ans = map_collect_vec(map, |(name, defs)| {
+        let (deprecated, active): (Vec<_>, Vec<_>) =
+            defs.into_iter().partition(|(_, deprecated)| *deprecated);
+        let cfg = aggregate_cfg(active.into_iter().map(|(cfg, _)| cfg));
+        let deprecated_cfg = aggregate_cfg(deprecated.into_iter().map(|(cfg, _)| cfg));
+        (cfg, deprecated_cfg, name)
+    });
+    ans.sort_by(|lhs, rhs| lhs.2.cmp(&rhs.2));
+    ans
+}
+
+fn aggregate_cfg(exprs: impl IntoIterator<Item = CfgExpr>) -> CfgExpr {
+    let exprs: Vec<CfgExpr> = exprs.into_iter().collect();
+    if exprs.is_empty() {
+        CfgExpr::Const(false)
+    } else {
+        simplified_expr(cfg_any(exprs))
+    }
 }
 
 fn resolve_fs_path(dir: &Utf8Path, mod_name: &Ident) -> Utf8PathBuf {
@@ -107,7 +135,7 @@ fn resolve_fs_path(dir: &Utf8Path, mod_name: &Ident) -> Utf8PathBuf {
 
 struct DfsContext<'a> {
     re: &'a RegexSet,
-    items: HashMap<Ident, Vec<CfgExpr>>,
+    items: HashMap<Ident, Vec<(CfgExpr, bool)>>,
 }
 
 fn dfs(
@@ -122,9 +150,12 @@ fn dfs(
 
     let ast = parse_file(fs_path).with_context(|| format!("failed to parse file: {fs_path:?}"))?;
 
-    for (cfg, name) in find_cfg_items(&ast, ctx.re) {
+    for (cfg, name, deprecated) in find_cfg_items(&ast, ctx.re) {
         let item_cfg = join_item_cfg(mod_cfg, cfg);
-        ctx.items.entry(name).or_default().push(item_cfg);
+        ctx.items
+            .entry(name)
+            .or_default()
+            .push((item_cfg, deprecated));
     }
 
     for (cfg, name) in find_mod_in_file(&ast) {

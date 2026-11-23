@@ -18,6 +18,13 @@ A codegen tool for extracting `cfg` expressions from the [`libc`](https://github
 cargo run --features binary -- --libc /path/to/libc '^pthread_'
 ```
 
+## Deprecated definitions
+
+libc marks some definitions `#[deprecated]`. They are excluded from
+`CfgItem::cfg`, so an item is reported as unavailable where only deprecated
+definitions exist, and they are reported separately through
+`CfgItem::deprecated_cfg`.
+
 ## Contributing
 
 + [Development Guide](./CONTRIBUTING.md)

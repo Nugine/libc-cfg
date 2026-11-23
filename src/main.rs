@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     let ans = search(&opt.libc, &re).with_context(|| "failed to search")?;
 
     let mut stdout = std::io::stdout().lock();
-    for CfgItem { cfg, name } in ans {
+    for CfgItem { cfg, name, .. } in ans {
         writeln!(stdout, "#[cfg({cfg})]\npub use libc::{name};\n")?;
     }
 
